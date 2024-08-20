@@ -21,13 +21,14 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from config import Config
-from data_reciever import MoneyFlowStrategy
-from data_handler import DBHandler
+from data_reciever import MoneyFlowStrategy, LorentzianClassificationStrategy
+from data_handler import JsonDBHandler
+from portfolio_manager import TestOrderManager
 
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
 strategy = MoneyFlowStrategy(query_limit=5)
-db_handler = DBHandler(Config.DB_FILE_PATH)
-
+db_handler = JsonDBHandler(Config.DB_FILE_PATH)
+sandbox_broker = TestOrderManager()
 user_states = {}
 
 
@@ -89,7 +90,7 @@ async def buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ticker = query.data.split("_")[-1]  
     # TODO:
     # Тестовая/Реальная покупка
-    success = True
+    success = sandbox_broker.buy_stock_now(ticker)
     
     if success:
         await query.edit_message_text(f"Покупка *{ticker}* успешна совершена.",  parse_mode=ParseMode.MARKDOWN,)
