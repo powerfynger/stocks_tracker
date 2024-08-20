@@ -7,4 +7,4 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 class Config:
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     TEST_CHAT_ID = 6166420250
-    MIN_RELATIVE_VOLUME_DAY = 3
+    DB_FILE_PATH = "data.json"
