@@ -11,9 +11,10 @@ class JsonDBHandler:
         self.file.close()
 
     def load_data_from_file(self):
-        if os.path.exists(self.file_path):
-            with open(self.file_path, 'r') as f:
-                return json.load(f)
+        try:
+            return json.load(self.file)
+        except BaseException:
+            pass
         return {}
 
     def save_data_to_file(self):

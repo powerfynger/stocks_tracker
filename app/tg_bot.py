@@ -28,7 +28,7 @@ from portfolio_manager import TestOrderManager
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
 strategy = MoneyFlowStrategy(query_limit=5)
 db_handler = JsonDBHandler(Config.DB_FILE_PATH)
-sandbox_broker = TestOrderManager()
+sandbox_broker = TestOrderManager("TickersToFigi.json")
 user_states = {}
 
 
@@ -87,7 +87,7 @@ async def buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    ticker = query.data.split("_")[-1]  
+    ticker = query.data.split("_")[-1].split(":")[-1]
     # TODO:
     # Тестовая/Реальная покупка
     success = sandbox_broker.buy_stock_now(ticker)

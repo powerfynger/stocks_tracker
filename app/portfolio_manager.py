@@ -13,6 +13,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 
 import os, sys
+import uuid 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(script_dir, '..'))
@@ -56,13 +57,16 @@ class TestOrderManager:
     
     def buy_stock_now(self, ticker: str):
         with SandboxClient(Config.TINKOFF_SANDBOX_TOKEN) as client:
+            order_id = uuid.uuid4().hex
+            # order_id = str(datetime.now().timestamp())
+            print(order_id)
             figi = self.get_figi_by_ticker(ticker)
-            # Покупка
-            post_order_response = client.sandbox.post_sandbox_order(
+            # Покупка 
+            post_order_response = client.orders.post_order(
                 figi=figi,
+                order_id=order_id + "4242", 
                 quantity=1,
                 account_id=self.account_id,
-                order_id=datetime.now().strftime("%Y-%m-%dT %H:%M:%S"),
                 direction=OrderDirection.ORDER_DIRECTION_BUY,
                 order_type=OrderType.ORDER_TYPE_MARKET
             )
