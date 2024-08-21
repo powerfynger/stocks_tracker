@@ -4,7 +4,7 @@ import os
 class JsonDBHandler:
     def __init__(self, file_path):
         self.file_path = file_path
-        self.data = self.load_data_from_file()
+        self.data = {}
         self.file = open(self.file_path, 'w')
 
     def __del__(self):
@@ -18,7 +18,8 @@ class JsonDBHandler:
         return {}
 
     def save_data_to_file(self):
-        json.dump(self.data, self.file, indent=4)
+        with open(self.file_path, 'w') as file:
+            json.dump(self.data, file, indent=4)
 
     def get_data(self):
         return self.data
@@ -28,4 +29,6 @@ class JsonDBHandler:
     
     def update_data(self, ticker, stock_info):
         self.data[ticker] = stock_info
+
+    def close(self):
         self.save_data_to_file()
