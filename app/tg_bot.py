@@ -23,12 +23,12 @@ from telegram.constants import ParseMode
 from config import Config
 from data_reciever import MoneyFlowStrategy, LorentzianClassificationStrategy
 from data_handler import JsonDBHandler
-from portfolio_manager import TestOrderManager
+from portfolio_manager import TinkoffOrderManager
 
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
 strategy = MoneyFlowStrategy(query_limit=5)
 db_handler = JsonDBHandler(Config.DB_FILE_PATH)
-sandbox_broker = TestOrderManager("TickersToFigi.json")
+sandbox_broker = TinkoffOrderManager(db_filepath="TickersToFigi.json",api_key=Config.TINKOFF_REAL_TOKEN)
 user_states = {}
 
 
@@ -77,9 +77,8 @@ async def poll_new_data(bot):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             msg_text = get_pretty_from_stock(stock_info)
-            await bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-            
             db_handler.update_data(ticker, stock_info)
+            await bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         
         await asyncio.sleep(60)
 
