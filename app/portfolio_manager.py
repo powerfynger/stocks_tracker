@@ -1,11 +1,11 @@
 import pandas as pd
-
+from typing import List, Dict
 from tinkoff.invest import (
     CandleInterval, Client, MoneyValue,
     OrderDirection, OrderType, InstrumentStatus,
     StopOrderDirection, StopOrderType, StopOrderExpirationType
     )
-from tinkoff.invest.services import SandboxService, InstrumentsService
+from tinkoff.invest.services import SandboxService, InstrumentsService, OperationsService
 from tinkoff.invest.sandbox.client import SandboxClient
 from tinkoff.invest.utils import decimal_to_quotation, quotation_to_decimal, money_to_decimal, now
 from decimal import Decimal
@@ -57,7 +57,20 @@ class BaseOrderManager(abc.ABC):
     @abc.abstractmethod
     def buy_stock_now(self, ticker: str):
         """
-        Метод для покупки акций. Должен быть реализован в подклассах.
+        Метод для моментальной покупки акций. Должен быть реализован в подклассах.
+        """
+        pass
+    
+    @abc.abstractmethod
+    def sell_stock_now(self, ticker: str):
+        """
+        Метод для моментальной продажи акций. Должен быть реализован в подклассах.
+        """
+        pass
+    @abc.abstractmethod
+    def get_portfolio_stocks(self):
+        """
+        Метод получения акций из портфолио. Должен быть реализован в подклассах.
         """
         pass
 
@@ -82,12 +95,33 @@ class TinkoffOrderManager(BaseOrderManager):
         positions = client.operations.get_positions(account_id=self.account_id).money
         self.balance = float(quotation_to_decimal(positions[0]))
 
-    def buy_stock_now(self, ticker: str):
+    def sell_stock_now(self, ticker: str, quantity: int) -> Decimal:
+        """
+        Возращается число -- суммарное цена всей заявки
+        """
         with self.get_client() as client:
             order_id = uuid.uuid4().hex
             figi = self.get_figi_by_ticker(ticker)
 
-            # Покупка 
+            post_order_response = client.orders.post_order(
+                figi=figi,
+                order_id=order_id,
+                quantity=quantity,
+                account_id=self.account_id,
+                direction=OrderDirection.ORDER_DIRECTION_SELL,
+                order_type=OrderType.ORDER_TYPE_MARKET
+            )
+
+        return round(money_to_decimal(post_order_response.total_order_amount),2)
+
+    def buy_stock_now(self, ticker: str) -> Decimal:
+        """
+        Возращается число -- суммарное цена всей заявки
+        """
+        with self.get_client() as client:
+            order_id = uuid.uuid4().hex
+            figi = self.get_figi_by_ticker(ticker)
+
             post_order_response = client.orders.post_order(
                 figi=figi,
                 order_id=order_id,
@@ -101,7 +135,7 @@ class TinkoffOrderManager(BaseOrderManager):
             self.set_take_profit(client, figi, executed_order_price)
             self.set_stop_loss(client, figi, executed_order_price)
 
-        return True
+        return round(money_to_decimal(post_order_response.total_order_amount),2)
 
     def set_take_profit(self, client, figi, executed_order_price):
         take_profit_price = executed_order_price * Decimal(1 + TAKE_PROFIT_PERCENTAGE)
@@ -132,24 +166,50 @@ class TinkoffOrderManager(BaseOrderManager):
             expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_DATE,
         )  
     
+    def get_portfolio_stocks(self) -> List[Dict]:
+        with self.get_client() as client:
+            stocks = [] 
+            for position in client.operations.get_portfolio(account_id=self.account_id).positions:
+                stock = {}
+                stock['ticker'] = self.get_ticker_by_figi(position.figi)
+                stock['worth_current'] = round(money_to_decimal(position.current_price) * quotation_to_decimal(position.quantity),2)
+                stock['worth_average'] = round(money_to_decimal(position.average_position_price_fifo) * quotation_to_decimal(position.quantity),2)
+                stock['quantity'] = int(quotation_to_decimal(position.quantity_lots))
+                stock['profit_current'] = round(quotation_to_decimal(position.expected_yield)/stock['worth_current'] * 100, 2)
+                stocks.append(stock)
+            return stocks
+    
     def get_figi_by_ticker(self, ticker: str):
         return self.db.get_info_by_ticker(ticker)
 
+    def get_ticker_by_figi(self, figi: str):
+        return self.db.get_ticker_by_info(figi)
+
     def reload_ticker_figi_db(self, instruments):
+        current_time = datetime.now()
+        
+        last_update_time = self.db.get_last_update_time()
+        if last_update_time and (current_time - last_update_time) < timedelta(days=1):
+            return
+        
         figi_ticker_df = pd.DataFrame(
             instruments.shares(instrument_status=InstrumentStatus.INSTRUMENT_STATUS_BASE).instruments,
             columns=['ticker', 'figi']
         )
         for pair in figi_ticker_df.to_dict(orient="records"):
             self.db.update_data(pair['ticker'], pair['figi'])
+        
+        self.db.save_last_update_time(current_time)
         self.db.save_data_to_file()
       
-
-
     
 def main():
     test_man = TinkoffOrderManager("TickersToFigi.json")
-    print(test_man.get_balance())
+    for stock in test_man.get_portfolio_stocks():
+        print(stock)
+        
+        
+        
 
 if __name__ == "__main__":
     main()
