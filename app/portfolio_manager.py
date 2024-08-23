@@ -3,7 +3,8 @@ from typing import List, Dict
 from tinkoff.invest import (
     CandleInterval, Client, MoneyValue,
     OrderDirection, OrderType, InstrumentStatus,
-    StopOrderDirection, StopOrderType, StopOrderExpirationType
+    StopOrderDirection, StopOrderType, StopOrderExpirationType,
+    InstrumentIdType
     )
 from tinkoff.invest.services import SandboxService, InstrumentsService, OperationsService
 from tinkoff.invest.sandbox.client import SandboxClient
@@ -114,7 +115,7 @@ class TinkoffOrderManager(BaseOrderManager):
 
         return round(money_to_decimal(post_order_response.total_order_amount),2)
 
-    def buy_stock_now(self, ticker: str) -> Decimal:
+    def buy_stock_now(self, ticker: str, quantity: int) -> Decimal:
         """
         Возращается число -- суммарное цена всей заявки
         """
@@ -125,15 +126,21 @@ class TinkoffOrderManager(BaseOrderManager):
             post_order_response = client.orders.post_order(
                 figi=figi,
                 order_id=order_id,
-                quantity=1,
+                quantity=quantity,
                 account_id=self.account_id,
                 direction=OrderDirection.ORDER_DIRECTION_BUY,
                 order_type=OrderType.ORDER_TYPE_MARKET
             )
 
             executed_order_price = money_to_decimal(post_order_response.executed_order_price)
-            self.set_take_profit(client, figi, executed_order_price)
-            self.set_stop_loss(client, figi, executed_order_price)
+            try:
+                self.set_take_profit(client, figi, executed_order_price)
+            except:
+                pass
+            try:
+                self.set_stop_loss(client, figi, executed_order_price)
+            except:
+                pass
 
         return round(money_to_decimal(post_order_response.total_order_amount),2)
 
@@ -179,6 +186,18 @@ class TinkoffOrderManager(BaseOrderManager):
                 stocks.append(stock)
             return stocks
     
+    def get_info_by_ticker(self, ticker: str) -> Dict:
+        with self.get_client() as client:
+            share_response = client.instruments.share_by(
+                id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI, 
+                id=self.get_figi_by_ticker(ticker)
+            )
+        stock_info = {}
+        stock_info['lot'] = share_response.instrument.lot
+        stock_info['ticker'] = share_response.instrument.ticker
+        return stock_info
+
+    
     def get_figi_by_ticker(self, ticker: str):
         return self.db.get_info_by_ticker(ticker)
 
@@ -205,9 +224,9 @@ class TinkoffOrderManager(BaseOrderManager):
     
 def main():
     test_man = TinkoffOrderManager("TickersToFigi.json")
-    for stock in test_man.get_portfolio_stocks():
-        print(stock)
-        
+    # for stock in test_man.get_info_by_ticker('LKOH'):
+        # print(stock)
+    print(test_man.get_info_by_ticker('UGLD'))
         
         
 

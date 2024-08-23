@@ -38,23 +38,69 @@ class MoneyFlowStrategy(TradingStrategy):
     def get_data(self):
         indicators = ['ChaikinMoneyFlow|15', 'MoneyFlow|14', 'RSI|15', 'volume|15', 'EMA20|15', 'ATR|15']
         self.data = (Query()
-            .select('name', 'close', 'volume', 'volume_change', 'relative_volume_10d_calc', 'relative_volume_intraday|5', 'ChaikinMoneyFlow', 'ATR')
+            .select('name', 'close', 'volume', 'volume_change', 'relative_volume_10d_calc', 'relative_volume_intraday|5', 'ChaikinMoneyFlow', 'ATR', "RSI", "ADX")
             .where(col('volume_change') > 0.5)  # изменение объема более 50%
             .where(col('relative_volume_10d_calc') > 1.2) # относительный объем за 10 дней более 120%
             .where(col('relative_volume_intraday|5') > 2)  # относительный объем за 5 минут более 200%
             .where(col('ChaikinMoneyFlow') > 0.1)  # положительный денежный поток Чайкина
-            .where(col('close') > col('open'))  # цена закрытия выше цены открытия (??)
+            .where(col('RSI') > 60) # RSI указывает на силу покупателей
+            .where(col('ADX') > 20) # Наличие тренда
+            # .where(col('close') > col('open'))  # цена закрытия выше цены открытия (??)
             .limit(self.query_limit)
             .set_markets('russia')).get_scanner_data()[1]
+        
+        self.data['score'] = self.data.apply(self.calculate_buy_score, axis=1)
         self.sort_data()
+        # self.add_scores()
         return self.data.to_dict(orient="records")
 
     def sort_data(self):
         self.data = self.data\
         .sort_values('volume_change', ascending=False)\
         .sort_values('relative_volume_10d_calc', ascending=False)\
-        .sort_values('ChaikinMoneyFlow', ascending=False)
+        .sort_values('score', ascending=False)\
+        .sort_values('ChaikinMoneyFlow', ascending=False)\
         
+    # def add_scores(self):
+        # for i in range(lenself.data):
+            # self.data[i]['score'] = self.calculate_buy_score(self.data[i])
+        
+    
+    def calculate_buy_score(self, stock_data):
+        score = 0
+
+        # Объем
+        if stock_data['volume_change'] > 1:
+            score += 2
+        elif stock_data['volume_change'] > 0.5:
+            score += 1
+
+        if stock_data['relative_volume_10d_calc'] > 2:
+            score += 2
+        elif stock_data['relative_volume_10d_calc'] > 1.5:
+            score += 1
+
+        # RSI
+        if stock_data['RSI'] > 70:
+            score += 1
+        elif stock_data['RSI'] > 60:
+            score += 0.5
+
+        # ADX
+        if stock_data['ADX'] > 30:
+            score += 1
+        elif stock_data['ADX'] > 25:
+            score += 0.5
+        
+        # Chaikin Money Flow
+        if stock_data['ChaikinMoneyFlow'] > 0.3:
+            score += 1
+        elif stock_data['ChaikinMoneyFlow'] > 0.2:
+            score += 0.5
+
+        return int(score)
+
+    
     
     def check_data(self):
         for stock_info in self.data.to_dict(orient="records"):

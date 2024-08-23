@@ -36,10 +36,12 @@ def get_pretty_from_stock(stock_info: Dict) -> str:
     name = stock_info.get('name')
     ticker = stock_info.get('ticker')
     close = stock_info.get('close')
+    score = stock_info.get('score')
     
     msg_text = f"📊 *Сигнал на покупку акции*\n\n" \
             f"Компания: *{name}*\n" \
             f"Тикер: `{ticker}`\n" \
+            f"Оценка: *{score}/5*.\n"\
             f"Цена: *{close}*\n\n" \
     # TODO:
     # Добавить процент уверенности по прохождению пороговых значений индикаторов 
@@ -75,7 +77,7 @@ async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DE
         stock_info = (
             f"Тикер: *{stock['ticker']}*\n"
             f"Текущая стоимость: *{stock['worth_current']}* руб.\n"
-            f"Средняя стоимость: *{stock['worth_average']}* руб.\n"
+            f"Стоимость при покупке: *{stock['worth_average']}* руб.\n"
             f"Количество: *{stock['quantity']}* шт.\n"
             f"Текущая прибыль: *{stock['profit_current']}%*\n"
             "------------------------------\n"
@@ -105,13 +107,14 @@ async def poll_new_data(bot):
         parsed_data = db_handler.get_data()
         data = strategy.get_data()
         
+        print(parsed_data)
         for stock_info in data:
             ticker = stock_info['ticker']
-            if ticker in parsed_data:
+            if ticker in parsed_data and stock_info['score'] <= parsed_data['ticer']['score']:
                 continue
             
             keyboard = [
-            [InlineKeyboardButton("Купить", callback_data=f"buy_stock_{ticker}")],
+            [InlineKeyboardButton("Купить", callback_data=f"ask_buy_stock_{ticker}")],
             [InlineKeyboardButton("Отмена", callback_data="cancel_button")],]   
             
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -122,17 +125,48 @@ async def poll_new_data(bot):
         
         await asyncio.sleep(60)
 
-async def buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     ticker = query.data.split("_")[-1].split(":")[-1]
-    money_spent = stocks_broker.buy_stock_now(ticker)
+    for stock_info in strategy.get_data():
+        if ticker == stock_info['name']:
+            price_for_quantity = stocks_broker.get_info_by_ticker(ticker)['lot'] * stock_info['close']
     
+    msg_text = (
+        f"Тикер: *{ticker}*\n"
+        f"Цена за 1 актив: *{price_for_quantity}* руб.\n"
+        f"Значение ATR: *{stock_info['ATR']}*.\n"
+        f"Оценка: *{stock_info['score']}/5*.\n"
+        "Введите количество активов для покупки"
+        )
+    
+    keyboard =[[InlineKeyboardButton("Отмена", callback_data="cancel_button")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.user_data["action"] = "buy_stock"
+    context.user_data["ticker"] = ticker
+    
+    
+    await query.edit_message_text(text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+      
+async def buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    quantity = int(update.message.text)
+    ticker = context.user_data["ticker"]
+    money_spent = stocks_broker.buy_stock_now(ticker, quantity)
+    msg_text = (
+        "*КУПЛЕНО*\n"
+        f"Тикер: *{ticker}*\n"
+        f"Количество: *{quantity}*\n"
+        f"Сумма сделки: *{money_spent}* руб.\n"
+    )
+
     if money_spent:
-        await query.edit_message_text(f"Покупка *{ticker}* на сумму *{money_spent}* (руб) успешна совершена.",  parse_mode=ParseMode.MARKDOWN,)
+        await update.message.reply_text(text=msg_text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await query.edit_message_text(f"Не удалось купить *{ticker}* на сумму *{money_spent}* (руб).", parse_mode=ParseMode.MARKDOWN,)
+        await update.message.reply_text(f"Не удалось купить *{ticker}* на сумму *{money_spent}* (руб).", parse_mode=ParseMode.MARKDOWN)
+    del context.user_data['ticker']
+    del context.user_data['action']
       
 async def edit_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -171,10 +205,15 @@ async def ask_sell_stock_button(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def sell_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    stock_index = int(query.data.split("_")[-1])
-    stocks_broker.sell_stock_now(stocks[stock_index]['ticker'], stocks[stock_index]['quantity'])
-
     await query.answer()
+    
+    stock_index = int(query.data.split("_")[-1])
+    money_spent = stocks_broker.sell_stock_now(stocks[stock_index]['ticker'], stocks[stock_index]['quantity'])
+
+    if money_spent:
+        await query.edit_message_text(f"Продажа *{stocks[stock_index]['ticker']}* на сумму *{money_spent}* (руб) успешна совершена.",  parse_mode=ParseMode.MARKDOWN)
+    else:
+        await query.edit_message_text(f"Не удалось продать *{stocks[stock_index]['ticker']}* на сумму *{money_spent}* (руб).", parse_mode=ParseMode.MARKDOWN)
         
 async def cancel_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -182,6 +221,12 @@ async def cancel_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
     await query.edit_message_text("Вы закрыли меню.")
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'action' in context.user_data:
+        action = context.user_data['action']
+        if action == 'buy_stock':
+            await buy_stock_button(update, context)
 
 def main():
     application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
@@ -194,8 +239,11 @@ def main():
     application.add_handler(CallbackQueryHandler(ask_sell_stock_button, pattern='^ask_sell_stock_'))
     application.add_handler(CallbackQueryHandler(sell_stock_button, pattern='^sell_stock_'))
     application.add_handler(CallbackQueryHandler(buy_stock_button, pattern='^buy_stock_'))
+    application.add_handler(CallbackQueryHandler(ask_buy_stock_button, pattern='^ask_buy_stock_'))
     application.add_handler(CallbackQueryHandler(edit_stock_button, pattern='^edit_stock_'))
     application.add_handler(CallbackQueryHandler(cancel_button, pattern='cancel_button'))
+    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
