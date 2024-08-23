@@ -26,22 +26,24 @@ from data_handler import JsonDBHandler
 from portfolio_manager import TinkoffOrderManager
 
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
-strategy = MoneyFlowStrategy(query_limit=5)
+strategy = MoneyFlowStrategy(query_limit=10)
 db_handler = JsonDBHandler(Config.DB_FILE_PATH)
 stocks_broker = TinkoffOrderManager(db_filepath="TickersToFigi.json",api_key=Config.TINKOFF_REAL_TOKEN)
-stocks = []
-
+stocks_proccesed = {}
+stocks_bought = {}
 
 def get_pretty_from_stock(stock_info: Dict) -> str:
     name = stock_info.get('name')
     ticker = stock_info.get('ticker')
     close = stock_info.get('close')
     score = stock_info.get('score')
+    atr = round(stock_info.get('ATR'),2)
     
     msg_text = f"📊 *Сигнал на покупку акции*\n\n" \
             f"Компания: *{name}*\n" \
             f"Тикер: `{ticker}`\n" \
             f"Оценка: *{score}/5*.\n"\
+            f"Значение ATR: *{atr}*.\n"\
             f"Цена: *{close}*\n\n" \
     # TODO:
     # Добавить процент уверенности по прохождению пороговых значений индикаторов 
@@ -59,25 +61,24 @@ def get_recomendation_str(percantage):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = await update.message.reply_text('Инициализация...')
-    asyncio.create_task(poll_new_data(context))
+    asyncio.create_task(poll_new_actives(context))
 
 async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global stocks
-    stocks = stocks_broker.get_portfolio_stocks()
-    if not stocks:
+    global stocks_bought
+    stocks_bought = stocks_broker.get_portfolio_stocks()
+    if not stocks_bought:
         await update.message.reply_text("У вас нет активов в портфеле.")
         return 
 
     msg_text = "Ваши активы:\n\n"
     keyboard = []
     
-    for index, stock in enumerate(stocks):
+    for index, stock in enumerate(stocks_bought):
         if stock['ticker'] == None:
             stock['ticker'] = "Rub"
         stock_info = (
             f"Тикер: *{stock['ticker']}*\n"
             f"Текущая стоимость: *{stock['worth_current']}* руб.\n"
-            f"Стоимость при покупке: *{stock['worth_average']}* руб.\n"
             f"Количество: *{stock['quantity']}* шт.\n"
             f"Текущая прибыль: *{stock['profit_current']}%*\n"
             "------------------------------\n"
@@ -101,15 +102,15 @@ async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DE
     await update.message.reply_text(text=msg_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN,)
 
 
-async def poll_new_data(bot):
+async def poll_new_actives(bot):
     chat_id = Config.TEST_CHAT_ID
     while True:
-        parsed_data = db_handler.get_data()
         data = strategy.get_data()
         
         for stock_info in data:
+            stock_info['ticker'] = stock_info['ticker'].split(":")[-1]
             ticker = stock_info['ticker']
-            if ticker in parsed_data and stock_info['score'] <= parsed_data[ticker]['score']:
+            if ticker in stocks_proccesed and stock_info['score'] <= stocks_proccesed[ticker]['score'] and stock_info['score'] != 5:
                 continue
             
             keyboard = [
@@ -119,7 +120,9 @@ async def poll_new_data(bot):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             msg_text = get_pretty_from_stock(stock_info)
-            db_handler.update_data(ticker, stock_info)
+            stocks_proccesed[ticker] = {}
+            stocks_proccesed[ticker].update(stock_info)
+        
             await bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         
         await asyncio.sleep(60)
@@ -128,7 +131,7 @@ async def ask_buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    ticker = query.data.split("_")[-1].split(":")[-1]
+    ticker = query.data.split("_")[-1]
     for stock_info in strategy.get_data():
         if ticker == stock_info['name']:
             price_for_quantity = stocks_broker.get_info_by_ticker(ticker)['lot'] * stock_info['close']
@@ -152,7 +155,8 @@ async def ask_buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYP
 async def buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quantity = int(update.message.text)
     ticker = context.user_data["ticker"]
-    money_spent = stocks_broker.buy_stock_now(ticker, quantity)
+    atr = stocks_proccesed[ticker]['ATR']
+    money_spent = stocks_broker.buy_stock_now(ticker, quantity, atr)
     msg_text = (
         "*КУПЛЕНО*\n"
         f"Тикер: *{ticker}*\n"
@@ -175,11 +179,11 @@ async def edit_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     msg_text = (
-            f"Тикер: *{stocks[stock_index]['ticker']}*\n"
-            f"Текущая стоимость: *{stocks[stock_index]['worth_current']}* руб.\n"
-            f"Средняя стоимость: *{stocks[stock_index]['worth_average']}* руб.\n"
-            f"Количество: *{stocks[stock_index]['quantity']}* шт.\n"
-            f"Текущая прибыль: *{stocks[stock_index]['profit_current']}%*\n"
+            f"Тикер: *{stocks_bought[stock_index]['ticker']}*\n"
+            f"Текущая стоимость: *{stocks_bought[stock_index]['worth_current']}* руб.\n"
+            f"Средняя стоимость: *{stocks_bought[stock_index]['worth_average']}* руб.\n"
+            f"Количество: *{stocks_bought[stock_index]['quantity']}* шт.\n"
+            f"Текущая прибыль: *{stocks_bought[stock_index]['profit_current']}%*\n"
         )
 
     keyboard.append([InlineKeyboardButton(text="Продать", callback_data=f"ask_sell_stock_{stock_index}")])
@@ -194,7 +198,7 @@ async def ask_sell_stock_button(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.answer()
     
-    msg_text = f"Вы уверены, что хотите продать *{stocks[stock_index]['ticker']}* с текущей прибылью *{stocks[stock_index]['profit_current']}%*?"
+    msg_text = f"Вы уверены, что хотите продать *{stocks_bought[stock_index]['ticker']}* с текущей прибылью *{stocks_bought[stock_index]['profit_current']}%*?"
     
     keyboard.append([InlineKeyboardButton(text="Продать", callback_data=f"sell_stock_{stock_index}")])
     keyboard.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_button")])
@@ -205,14 +209,14 @@ async def ask_sell_stock_button(update: Update, context: ContextTypes.DEFAULT_TY
 async def sell_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+
     stock_index = int(query.data.split("_")[-1])
-    money_spent = stocks_broker.sell_stock_now(stocks[stock_index]['ticker'], stocks[stock_index]['quantity'])
+    money_spent = stocks_broker.sell_stock_now(stocks_bought[stock_index]['ticker'], stocks_bought[stock_index]['quantity'])
 
     if money_spent:
-        await query.edit_message_text(f"Продажа *{stocks[stock_index]['ticker']}* на сумму *{money_spent}* (руб) успешна совершена.",  parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(f"Продажа *{stocks_bought[stock_index]['ticker']}* на сумму *{money_spent}* (руб) успешна совершена.",  parse_mode=ParseMode.MARKDOWN)
     else:
-        await query.edit_message_text(f"Не удалось продать *{stocks[stock_index]['ticker']}* на сумму *{money_spent}* (руб).", parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(f"Не удалось продать *{stocks_bought[stock_index]['ticker']}* на сумму *{money_spent}* (руб).", parse_mode=ParseMode.MARKDOWN)
         
 async def cancel_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -229,7 +233,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
-    db_handler.clean_data()
+    
     
     application.add_handler(CommandHandler('start', start_command))
     application.add_handler(CommandHandler('list', list_portfolio_stocks_command))
@@ -246,7 +250,7 @@ def main():
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.create_task(poll_new_data(application.bot))
+    loop.create_task(poll_new_actives(application.bot))
     application.run_polling()
 
 if __name__ == "__main__":

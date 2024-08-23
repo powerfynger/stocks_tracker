@@ -146,7 +146,7 @@ class LorentzianClassificationStrategy(TradingStrategy):
 
 
 def main():
-    strat = MoneyFlowStrategy(5)
+    strat = MoneyFlowStrategy(10)
     strat.get_data()
     strat.check_data()
 

@@ -115,7 +115,7 @@ class TinkoffOrderManager(BaseOrderManager):
 
         return round(money_to_decimal(post_order_response.total_order_amount),2)
 
-    def buy_stock_now(self, ticker: str, quantity: int) -> Decimal:
+    def buy_stock_now(self, ticker: str, quantity: int, atr=None) -> Decimal:
         """
         Возращается число -- суммарное цена всей заявки
         """
@@ -134,21 +134,24 @@ class TinkoffOrderManager(BaseOrderManager):
 
             executed_order_price = money_to_decimal(post_order_response.executed_order_price)
             try:
-                self.set_take_profit(client, figi, executed_order_price)
+                self.set_take_profit(client, figi, executed_order_price, quantity, atr)
             except:
                 pass
             try:
-                self.set_stop_loss(client, figi, executed_order_price)
+                self.set_stop_loss(client, figi, executed_order_price, quantity, atr)
             except:
                 pass
 
         return round(money_to_decimal(post_order_response.total_order_amount),2)
 
-    def set_take_profit(self, client, figi, executed_order_price):
-        take_profit_price = executed_order_price * Decimal(1 + TAKE_PROFIT_PERCENTAGE)
-        take_profit_price -= take_profit_price % Decimal(MIN_PRICE_STEP)
+    def set_take_profit(self, client, figi, executed_order_price, quantity, atr=None):
+        if atr:
+            take_profit_price = executed_order_price + atr
+        else: 
+            take_profit_price = executed_order_price * Decimal(1 + TAKE_PROFIT_PERCENTAGE)
+            take_profit_price -= take_profit_price % Decimal(MIN_PRICE_STEP)
         client.stop_orders.post_stop_order(
-            quantity=1,
+            quantity=quantity,
             price=decimal_to_quotation(take_profit_price),
             stop_price=decimal_to_quotation(take_profit_price),
             direction=StopOrderDirection.STOP_ORDER_DIRECTION_SELL,
@@ -159,11 +162,14 @@ class TinkoffOrderManager(BaseOrderManager):
             expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_DATE,
         )
 
-    def set_stop_loss(self, client, figi, executed_order_price):
-        stop_loss_price = executed_order_price * Decimal(1 + STOP_LOSS_PERCENTAGE)
-        stop_loss_price -= stop_loss_price % Decimal(MIN_PRICE_STEP)
+    def set_stop_loss(self, client, figi, executed_order_price, quantity, atr=None):
+        if atr:
+            stop_loss_price = executed_order_price - atr
+        else:
+            stop_loss_price = executed_order_price * Decimal(1 + STOP_LOSS_PERCENTAGE)
+            stop_loss_price -= stop_loss_price % Decimal(MIN_PRICE_STEP)
         client.stop_orders.post_stop_order(
-            quantity=1,
+            quantity=quantity,
             stop_price=decimal_to_quotation(stop_loss_price),
             direction=StopOrderDirection.STOP_ORDER_DIRECTION_SELL,
             account_id=self.account_id,
@@ -180,7 +186,6 @@ class TinkoffOrderManager(BaseOrderManager):
                 stock = {}
                 stock['ticker'] = self.get_ticker_by_figi(position.figi)
                 stock['worth_current'] = round(money_to_decimal(position.current_price) * quotation_to_decimal(position.quantity),2)
-                stock['worth_average'] = round(money_to_decimal(position.average_position_price_fifo) * quotation_to_decimal(position.quantity),2)
                 stock['quantity'] = int(quotation_to_decimal(position.quantity_lots))
                 stock['profit_current'] = round(quotation_to_decimal(position.expected_yield)/stock['worth_current'] * 100, 2)
                 stocks.append(stock)
