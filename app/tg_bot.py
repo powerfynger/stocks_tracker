@@ -107,10 +107,9 @@ async def poll_new_data(bot):
         parsed_data = db_handler.get_data()
         data = strategy.get_data()
         
-        print(parsed_data)
         for stock_info in data:
             ticker = stock_info['ticker']
-            if ticker in parsed_data and stock_info['score'] <= parsed_data['ticer']['score']:
+            if ticker in parsed_data and stock_info['score'] <= parsed_data[ticker]['score']:
                 continue
             
             keyboard = [
