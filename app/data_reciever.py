@@ -5,7 +5,6 @@ from typing import List
 
 base_strat = ['relative_volume_intraday|5', 'RSI|15', 'EMA10|15', 'relative_volume_10d_calc|5', 'Chaikin Money Flow (20)']
 
-
 class TradingStrategy:
     """
     Базовый класс для всех стратегий.
@@ -45,21 +44,22 @@ class MoneyFlowStrategy(TradingStrategy):
             .where(col('ChaikinMoneyFlow') > 0.1)  # положительный денежный поток Чайкина
             .where(col('RSI') > 60) # RSI указывает на силу покупателей
             .where(col('ADX') > 20) # Наличие тренда
+            .limit(100)
             # .where(col('close') > col('open'))  # цена закрытия выше цены открытия (??)
-            .limit(self.query_limit)
             .set_markets('russia')).get_scanner_data()[1]
         
         self.data['score'] = self.data.apply(self.calculate_buy_score, axis=1)
         self.sort_data()
+        self.data = self.data[self.data['score'] >= 3]
         # self.add_scores()
-        return self.data.to_dict(orient="records")
+        return self.data.head(self.query_limit).to_dict(orient="records")
 
     def sort_data(self):
         self.data = self.data\
         .sort_values('volume_change', ascending=False)\
         .sort_values('relative_volume_10d_calc', ascending=False)\
-        .sort_values('score', ascending=False)\
         .sort_values('ChaikinMoneyFlow', ascending=False)\
+        .sort_values('score', ascending=False)\
         
     # def add_scores(self):
         # for i in range(lenself.data):
@@ -148,7 +148,7 @@ class LorentzianClassificationStrategy(TradingStrategy):
 def main():
     strat = MoneyFlowStrategy(10)
     strat.get_data()
-    strat.check_data()
+    # strat.check_data()
 
 
 if __name__ == "__main__":

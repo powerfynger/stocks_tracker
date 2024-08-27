@@ -29,7 +29,7 @@ bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
 strategy = MoneyFlowStrategy(query_limit=10)
 db_handler = JsonDBHandler(Config.DB_FILE_PATH)
 stocks_broker = TinkoffOrderManager(db_filepath="TickersToFigi.json",api_key=Config.TINKOFF_REAL_TOKEN)
-stocks_proccesed = {}
+stocks_processed = {}
 stocks_bought = {}
 
 def get_pretty_from_stock(stock_info: Dict) -> str:
@@ -101,6 +101,11 @@ async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DE
     
     await update.message.reply_text(text=msg_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN,)
 
+async def reset_processed_stocks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global stocks_processed
+    stocks_processed = {}
+    
+    await update.message.reply_text(text="Обновлено")
 
 async def poll_new_actives(bot):
     chat_id = Config.TEST_CHAT_ID
@@ -110,7 +115,7 @@ async def poll_new_actives(bot):
         for stock_info in data:
             stock_info['ticker'] = stock_info['ticker'].split(":")[-1]
             ticker = stock_info['ticker']
-            if ticker in stocks_proccesed and stock_info['score'] <= stocks_proccesed[ticker]['score'] and stock_info['score'] != 5:
+            if ticker in stocks_processed and stock_info['score'] <= stocks_processed[ticker]['score']:
                 continue
             
             keyboard = [
@@ -120,8 +125,8 @@ async def poll_new_actives(bot):
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             msg_text = get_pretty_from_stock(stock_info)
-            stocks_proccesed[ticker] = {}
-            stocks_proccesed[ticker].update(stock_info)
+            stocks_processed[ticker] = {}
+            stocks_processed[ticker].update(stock_info)
         
             await bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         
@@ -155,7 +160,7 @@ async def ask_buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYP
 async def buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quantity = int(update.message.text)
     ticker = context.user_data["ticker"]
-    atr = stocks_proccesed[ticker]['ATR']
+    atr = stocks_processed[ticker]['ATR']
     money_spent = stocks_broker.buy_stock_now(ticker, quantity, atr)
     msg_text = (
         "*КУПЛЕНО*\n"
@@ -237,6 +242,7 @@ def main():
     
     application.add_handler(CommandHandler('start', start_command))
     application.add_handler(CommandHandler('list', list_portfolio_stocks_command))
+    application.add_handler(CommandHandler('reset', reset_processed_stocks_command))
 
 
     application.add_handler(CallbackQueryHandler(ask_sell_stock_button, pattern='^ask_sell_stock_'))

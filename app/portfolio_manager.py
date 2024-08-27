@@ -133,23 +133,22 @@ class TinkoffOrderManager(BaseOrderManager):
             )
 
             executed_order_price = money_to_decimal(post_order_response.executed_order_price)
+            info = self.get_info_by_figi(figi)
             try:
-                self.set_take_profit(client, figi, executed_order_price, quantity, atr)
-            except:
-                pass
-            try:
-                self.set_stop_loss(client, figi, executed_order_price, quantity, atr)
-            except:
-                pass
-
+                self.set_take_profit(client, figi, executed_order_price, quantity, info, atr)
+                self.set_stop_loss(client, figi, executed_order_price, quantity, info, atr)
+            except Exception as e:
+                print(e)
+            
         return round(money_to_decimal(post_order_response.total_order_amount),2)
 
-    def set_take_profit(self, client, figi, executed_order_price, quantity, atr=None):
+    def set_take_profit(self, client, figi, executed_order_price, quantity, stock_info, atr=None):
+        price_step = stock_info['price_step']
         if atr:
-            take_profit_price = executed_order_price + atr
+            take_profit_price = round((executed_order_price + Decimal(atr))/price_step, 0) * price_step
         else: 
             take_profit_price = executed_order_price * Decimal(1 + TAKE_PROFIT_PERCENTAGE)
-            take_profit_price -= take_profit_price % Decimal(MIN_PRICE_STEP)
+            take_profit_price -= take_profit_price % price_step
         client.stop_orders.post_stop_order(
             quantity=quantity,
             price=decimal_to_quotation(take_profit_price),
@@ -162,12 +161,13 @@ class TinkoffOrderManager(BaseOrderManager):
             expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_DATE,
         )
 
-    def set_stop_loss(self, client, figi, executed_order_price, quantity, atr=None):
+    def set_stop_loss(self, client, figi, executed_order_price, quantity, stock_info, atr=None):
+        price_step = stock_info['price_step']
         if atr:
-            stop_loss_price = executed_order_price - atr
+            stop_loss_price = round((executed_order_price - Decimal(atr))/price_step, 0) * price_step
         else:
             stop_loss_price = executed_order_price * Decimal(1 + STOP_LOSS_PERCENTAGE)
-            stop_loss_price -= stop_loss_price % Decimal(MIN_PRICE_STEP)
+            stop_loss_price -= stop_loss_price % price_step
         client.stop_orders.post_stop_order(
             quantity=quantity,
             stop_price=decimal_to_quotation(stop_loss_price),
@@ -200,6 +200,19 @@ class TinkoffOrderManager(BaseOrderManager):
         stock_info = {}
         stock_info['lot'] = share_response.instrument.lot
         stock_info['ticker'] = share_response.instrument.ticker
+        stock_info['price_step'] = quotation_to_decimal(share_response.instrument.min_price_increment)
+        return stock_info
+    
+    def get_info_by_figi(self, figi: str) -> Dict:
+        with self.get_client() as client:
+            share_response = client.instruments.share_by(
+                id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI, 
+                id=figi
+            )
+        stock_info = {}
+        stock_info['lot'] = share_response.instrument.lot
+        stock_info['ticker'] = share_response.instrument.ticker
+        stock_info['price_step'] = quotation_to_decimal(share_response.instrument.min_price_increment)
         return stock_info
 
     
@@ -231,7 +244,9 @@ def main():
     test_man = TinkoffOrderManager("TickersToFigi.json")
     # for stock in test_man.get_info_by_ticker('LKOH'):
         # print(stock)
-    print(test_man.get_info_by_ticker('UGLD'))
+    # print(test_man.get_info_by_ticker('UGLD'))
+    with test_man.get_client() as cl:
+        test_man.set_take_profit(cl, test_man.get_figi_by_ticker("SIBN"), Decimal(679.3), 1, 20.3)
         
         
 
