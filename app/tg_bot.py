@@ -26,7 +26,8 @@ from data_handler import JsonDBHandler
 from portfolio_manager import TinkoffOrderManager
 
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
-strategy = MoneyFlowStrategy(query_limit=10)
+# strategy = MoneyFlowStrategy(query_limit=10)
+strategy = LorentzianClassificationStrategy(query_limit=10)
 db_handler = JsonDBHandler(Config.DB_FILE_PATH)
 stocks_broker = TinkoffOrderManager(db_filepath="TickersToFigi.json",api_key=Config.TINKOFF_REAL_TOKEN)
 stocks_processed = {}
@@ -42,7 +43,7 @@ def get_pretty_from_stock(stock_info: Dict) -> str:
     msg_text = f"📊 *Сигнал на покупку акции*\n\n" \
             f"Компания: *{name}*\n" \
             f"Тикер: `{ticker}`\n" \
-            f"Оценка: *{score}/5*.\n"\
+            f"Оценка: *{score}{strategy.get_max_score()}*.\n"\
             f"Значение ATR: *{atr}*.\n"\
             f"Цена: *{close}*\n\n" \
     # TODO:
@@ -186,7 +187,6 @@ async def edit_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_text = (
             f"Тикер: *{stocks_bought[stock_index]['ticker']}*\n"
             f"Текущая стоимость: *{stocks_bought[stock_index]['worth_current']}* руб.\n"
-            f"Средняя стоимость: *{stocks_bought[stock_index]['worth_average']}* руб.\n"
             f"Количество: *{stocks_bought[stock_index]['quantity']}* шт.\n"
             f"Текущая прибыль: *{stocks_bought[stock_index]['profit_current']}%*\n"
         )
