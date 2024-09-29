@@ -21,13 +21,13 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from config import Config
-from data_reciever import MoneyFlowStrategy, LorentzianClassificationStrategy
+from data_reciever import MoneyFlowStrategy
 from data_handler import JsonDBHandler
 from portfolio_manager import TinkoffOrderManager
 
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
-# strategy = MoneyFlowStrategy(query_limit=10)
-strategy = LorentzianClassificationStrategy(query_limit=10)
+strategy = MoneyFlowStrategy(query_limit=10)
+# strategy = LorentzianClassificationStrategy(query_limit=10)
 db_handler = JsonDBHandler(Config.DB_FILE_PATH)
 stocks_broker = TinkoffOrderManager(db_filepath="TickersToFigi.json",api_key=Config.TINKOFF_REAL_TOKEN)
 stocks_processed = {}
@@ -43,13 +43,20 @@ def get_pretty_from_stock(stock_info: Dict) -> str:
     msg_text = f"📊 *Сигнал на покупку акции*\n\n" \
             f"Компания: *{name}*\n" \
             f"Тикер: `{ticker}`\n" \
-            f"Оценка: *{score}{strategy.get_max_score()}*.\n"\
+            f"Оценка: *{score}/{strategy.get_maxscore()}*.\n"\
             f"Значение ATR: *{atr}*.\n"\
             f"Цена: *{close}*\n\n" \
     # TODO:
     # Добавить процент уверенности по прохождению пороговых значений индикаторов 
     return msg_text
 
+def get_pretty_from_indicators_stock(stock_info: Dict) -> str:
+    indicators = strategy.get_indicators()
+    msg_text = f"📊 *Сигнал на покупку акции*\n\n"
+    for indicator in indicators:
+        msg_text += f"*{indicator}*: {stock_info[indicator]}\n"
+    
+    return msg_text
 
 def get_recomendation_str(percantage):
     percantage = float(percantage)
@@ -116,7 +123,7 @@ async def poll_new_actives(bot):
         for stock_info in data:
             stock_info['ticker'] = stock_info['ticker'].split(":")[-1]
             ticker = stock_info['ticker']
-            if ticker in stocks_processed and stock_info['score'] <= stocks_processed[ticker]['score']:
+            if ticker in stocks_processed and stock_info['ChaikinMoneyFlow|60'] <= stocks_processed[ticker]['ChaikinMoneyFlow|60']:
                 continue
             
             keyboard = [
@@ -125,7 +132,7 @@ async def poll_new_actives(bot):
             
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            msg_text = get_pretty_from_stock(stock_info)
+            msg_text = get_pretty_from_indicators_stock(stock_info)
             stocks_processed[ticker] = {}
             stocks_processed[ticker].update(stock_info)
         

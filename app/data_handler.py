@@ -4,7 +4,10 @@ from datetime import datetime
 class JsonDBHandler:
     def __init__(self, file_path):
         self.file_path = file_path
-        self.file = open(self.file_path, 'r+')
+        try:
+            self.file = open(self.file_path, 'r+')
+        except FileNotFoundError:
+            self.file = open(self.file_path, 'w+')
         self.data = self.load_data_from_file()
 
     def __del__(self):
