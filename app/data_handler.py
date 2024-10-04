@@ -32,7 +32,10 @@ class JsonDBHandler:
         return self.data
 
     def get_info_by_ticker(self, ticker):
-        return self.data[ticker]
+        try: 
+            return self.data[ticker]
+        except KeyError:
+            return None
     
     def get_ticker_by_info(self, stock_info):
         for ticker, info in self.data.items():

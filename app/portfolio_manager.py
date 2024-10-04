@@ -6,7 +6,8 @@ from tinkoff.invest import (
     StopOrderDirection, StopOrderType, StopOrderExpirationType,
     InstrumentIdType
     )
-from tinkoff.invest.services import SandboxService, InstrumentsService, OperationsService
+
+from tinkoff.invest.services import SandboxService, InstrumentsService, OperationsService, MarketDataService
 from tinkoff.invest.sandbox.client import SandboxClient
 from tinkoff.invest.utils import decimal_to_quotation, quotation_to_decimal, money_to_decimal, now
 from decimal import Decimal
@@ -76,10 +77,11 @@ class BaseOrderManager(abc.ABC):
         pass
 
 class TinkoffOrderManager(BaseOrderManager):
-    def __init__(self, db_filepath, api_key=Config.TINKOFF_REAL_TOKEN):
+    def __init__(self, db_filepath, capital=Config.CAPITAL, api_key=Config.TINKOFF_REAL_TOKEN):
         super().__init__(api_key)
         self.db = JsonDBHandler(db_filepath)
-
+        self.capital = capital
+        
         with self.get_client() as client:
             self.reload_ticker_figi_db(client.instruments)
             self.open_account(client)
@@ -95,6 +97,9 @@ class TinkoffOrderManager(BaseOrderManager):
     def load_balance(self, client):
         positions = client.operations.get_positions(account_id=self.account_id).money
         self.balance = float(quotation_to_decimal(positions[0]))
+        
+    def get_balance(self):
+        return self.balance
 
     def sell_stock_now(self, ticker: str, quantity: int) -> Decimal:
         """
@@ -103,7 +108,8 @@ class TinkoffOrderManager(BaseOrderManager):
         with self.get_client() as client:
             order_id = uuid.uuid4().hex
             figi = self.get_figi_by_ticker(ticker)
-
+            if not figi:
+                return Decimal(0)
             post_order_response = client.orders.post_order(
                 figi=figi,
                 order_id=order_id,
@@ -179,6 +185,29 @@ class TinkoffOrderManager(BaseOrderManager):
             expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_DATE,
         )  
     
+    def buy_stock_for_amount(self, ticker: str, amount: float) -> Decimal:
+        with self.get_client() as client:
+            order_id = uuid.uuid4().hex
+            figi = self.get_figi_by_ticker(ticker)
+            if not figi:
+                return Decimal(0)
+            try:
+                last_price = (client.market_data.get_last_prices(figi=[figi])).last_prices[0].price
+                quantity = int(int(amount)//quotation_to_decimal(last_price))
+                quantity = min(client.market_data.get_order_book(figi=figi, depth=1).asks[0].quantity, quantity)
+                post_order_response = client.orders.post_order(
+                    figi=figi,
+                    order_id=order_id,
+                    quantity=quantity,
+                    account_id=self.account_id,
+                    direction=OrderDirection.ORDER_DIRECTION_BUY,
+                    order_type=OrderType.ORDER_TYPE_MARKET
+                )
+            except Exception as e:
+                print(e)
+                return str(e)
+        return round(money_to_decimal(post_order_response.total_order_amount),2)        
+    
     def get_portfolio_stocks(self) -> List[Dict]:
         with self.get_client() as client:
             stocks = [] 
@@ -193,9 +222,12 @@ class TinkoffOrderManager(BaseOrderManager):
     
     def get_info_by_ticker(self, ticker: str) -> Dict:
         with self.get_client() as client:
+            figi = self.get_figi_by_ticker(ticker)
+            if not figi:
+                return Decimal(0)
             share_response = client.instruments.share_by(
                 id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI, 
-                id=self.get_figi_by_ticker(ticker)
+                id=figi
             )
         stock_info = {}
         stock_info['lot'] = share_response.instrument.lot
@@ -244,9 +276,14 @@ def main():
     test_man = TinkoffOrderManager("TickersToFigi.json")
     # for stock in test_man.get_info_by_ticker('LKOH'):
         # print(stock)
-    # print(test_man.get_info_by_ticker('UGLD'))
+    figi = test_man.get_figi_by_ticker('MTLR')
     with test_man.get_client() as cl:
-        test_man.set_take_profit(cl, test_man.get_figi_by_ticker("SIBN"), Decimal(679.3), 1, 20.3)
+        print(cl.market_data.get_order_book(figi=figi, depth=1).asks[0].quantity)
+    #     last_price = (cl.market_data.get_last_prices(figi=[figi])).last_prices[0].price
+    #     print(last_price)
+    #     quantity = amount//quotation_to_decimal(last_price)
+    #     print(quantity)
+    
         
         
 
