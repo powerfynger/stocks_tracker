@@ -3,6 +3,7 @@ import os
 import asyncio
 from datetime import datetime
 from typing import Dict
+import time
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -21,15 +22,17 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 from config import Config
-from data_reciever import MoneyFlowStrategy
+from data_reciever import MoneyFlowStrategy, NadarayaWatsonStrategy
 # from data_handler import JsonDBHandler
-from portfolio_manager import TinkoffOrderManager
+from portfolio_manager import TinkoffOrderManager, TinkoffSandboxOrderManager
 
 bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
-strategy = MoneyFlowStrategy(query_limit=10)
 # strategy = LorentzianClassificationStrategy(query_limit=10)
 stop_trading_flag = False
-stocks_broker = TinkoffOrderManager(db_filepath="TickersToFigi.json",api_key=Config.TINKOFF_REAL_TOKEN)
+stocks_broker = TinkoffOrderManager(capital=Config.CAPITAL, db_filepath="TickersToFigiRus.json",api_key=Config.TINKOFF_REAL_TOKEN)
+# stocks_broker = TinkoffSandboxOrderManager(capital=Config.CAPITAL, db_filepath="TickersToFigiRus.json",api_key=Config.TINKOFF_REAL_TOKEN)
+# strategy = MoneyFlowStrategy(query_limit=100)
+strategy = NadarayaWatsonStrategy(tinkObj=stocks_broker, query_limit=100)
 stocks_processed = {}
 stocks_bought = {}
 
@@ -51,10 +54,10 @@ def get_pretty_from_stock(stock_info: Dict) -> str:
     return msg_text
 
 def get_msg_from_stock(stock_info: Dict) -> str:
-    indicators = strategy.get_indicators()
+    # indicators = strategy.get_indicators()
     msg_text = ""
-    for indicator in indicators:
-        msg_text += f"*{indicator}*: {stock_info[indicator]}\n"
+    for indicator_value in stock_info.items():
+        msg_text += f"*{indicator_value[0]}*: {indicator_value[1]}\n"
     
     return msg_text
 
@@ -72,8 +75,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(poll_new_actives(context))
 
 async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    start = time.time()
     global stocks_bought
     stocks_bought = stocks_broker.get_portfolio_stocks()
+    print(f"Get portfolio: {time.time() - start}")
     if not stocks_bought:
         await update.message.reply_text("У вас нет активов в портфеле.")
         return 
@@ -84,6 +89,7 @@ async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DE
     for index, stock in enumerate(stocks_bought):
         if stock['ticker'] == None:
             stock['ticker'] = "Rub"
+       
         stock_info_str = (
             f"*Текущая стоимость:* {stock['worth_current']} руб.\n"
             f"*Количество:* {stock['quantity']} шт.\n"
@@ -95,7 +101,7 @@ async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DE
         
         stock_info = strategy.get_data_stock(stock['ticker'])
         if stock_info:
-            stock_info_str += get_msg_from_stock(stock_info[0])
+            stock_info_str += get_msg_from_stock(stock_info)
         msg_text += stock_info_str + "------------------------\n\n"
         
         keyboard.append([
@@ -111,6 +117,8 @@ async def list_portfolio_stocks_command(update: Update, context: ContextTypes.DE
     
     await update.message.reply_text(text=msg_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN,)
 
+async def get_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(text=f"Баланс: {stocks_broker.get_balance()}")
 async def reset_processed_stocks_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global stocks_processed
     stocks_processed = {}
@@ -121,15 +129,14 @@ async def get_potential_actives_command(update: Update, context: ContextTypes.DE
     msg_text = ""
     for stock in strategy.get_data():
         msg_text += get_msg_from_stock(stock)
-    
+    if not msg_text:
+        msg_text = "Нет подходящих активов для покупки."
     await update.message.reply_text(text=msg_text, parse_mode=ParseMode.MARKDOWN) 
 
 async def stop_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global stop_trading_flag
     stop_trading_flag = True
     await update.message.reply_text(text="Торговля остоновлена.", parse_mode=ParseMode.MARKDOWN) 
-
-    
 
 async def poll_bought_actives(bot):
     chat_id = Config.TEST_CHAT_ID
@@ -147,7 +154,7 @@ async def poll_bought_actives(bot):
         for index, stock in enumerate(stocks_bought):
             if stock['ticker'] is None:
                 continue
-
+            # print(stock, strategy.check_sell(stock['ticker']))
             if strategy.check_sell(stock['ticker']):
                 order_worth = stocks_broker.sell_stock_now(stock['ticker'], stocks_bought[index]['quantity'])
                 await bot.send_message(chat_id=chat_id, text=f"Продана {stock['ticker']} на {order_worth} с прибылью *{stock['profit_current']}*", parse_mode=ParseMode.MARKDOWN)
@@ -161,44 +168,45 @@ async def poll_new_actives(bot):
         data = strategy.get_data()
         
         for stock_info in data:
-
+            global stocks_bought
+            stocks_bought = stocks_broker.get_portfolio_stocks()
+            if len(stocks_bought) >= 12:
+                await asyncio.sleep(120)
+                continue
             stock_info['ticker'] = stock_info['ticker'].split(":")[-1]
             ticker = stock_info['ticker']
-            if (ticker in stocks_processed) and (stock_info['ChaikinMoneyFlow|120'] - stocks_processed[ticker]['ChaikinMoneyFlow|120'] < 0.1 or\
-                stock_info['relative_volume_10d_calc|120'] < stocks_processed[ticker]['relative_volume_10d_calc|120']):
-                continue
-            
+
             keyboard = [
             [InlineKeyboardButton("Купить", callback_data=f"ask_buy_stock_{ticker}")],
             [InlineKeyboardButton("Отмена", callback_data="cancel_button")],]   
             
             reply_markup = InlineKeyboardMarkup(keyboard)
-
             msg_text = f"📊 *Сигнал на покупку акции*\n\n" + get_msg_from_stock(stock_info)
-            stocks_processed[ticker] = {}
-            stocks_processed[ticker].update(stock_info)
+
             if stock_info['score'] >= strategy.get_border_score():
-                if ticker in stocks_bought:
-                    if stocks_bought[ticker]['worth_current'] >= stocks_broker.capital//3:
-                        continue
-                if stocks_broker.get_balance() < stocks_broker.capital//5:
-                    amount = stocks_broker.get_balance()
+                if not is_enough_in_portfolio(ticker):
+                    amount = min(stocks_broker.get_balance(), stocks_broker.capital//5)
+                    # amount = min(stocks_broker.get_balance(), 2000)
+                    print(f"Buying {stock_info['ticker']} {amount}")
+                    order_worth = stocks_broker.buy_stock_for_amount(stock_info['ticker'], amount)
+                    if type(order_worth) == str:
+                        pass
+                    elif order_worth > 0:
+                        await bot.send_message(chat_id=chat_id, text=f"Куплена {stock_info['ticker']} на {order_worth}", parse_mode=ParseMode.MARKDOWN)
                 else:
-                    amount = stocks_broker.capital//5
-                order_worth = stocks_broker.buy_stock_for_amount(stock_info['ticker'], amount)
-                if type(order_worth) == str:
-                    try:
-                        await bot.send_message(chat_id=chat_id, text=f"Не удалось купить {stock_info['ticker']}\n{order_worth}")
-                    except:
-                        await bot.send_message(chat_id=chat_id, text=f"Не удалось купить {stock_info['ticker']}\nПричина неизвестна.")
+                    # await bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+                    pass
                         
-                elif order_worth > 0:
-                    await bot.send_message(chat_id=chat_id, text=f"Куплена {stock_info['ticker']} на {order_worth}", parse_mode=ParseMode.MARKDOWN)
-            else:
-                # await bot.send_message(chat_id=chat_id, text=msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-                pass
-                    
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)
+
+def is_enough_in_portfolio(ticker):
+    curr = 0
+    for stock in stocks_bought:
+        if stock['ticker'] == ticker:
+            curr += stock['worth_current']
+    if curr >=  Config.CAPITAL//4:
+        return True
+    return False
 
 async def ask_buy_stock_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -307,6 +315,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action = context.user_data['action']
         if action == 'buy_stock':
             await buy_stock_button(update, context)
+            return
+    print("Handling")
+    stock_data = strategy.get_data_stock(update.message.text.upper())
+    if stock_data:
+        await update.message.reply_text(text=get_msg_from_stock(stock_data[0]), parse_mode=ParseMode.MARKDOWN)
+    else:
+        await update.message.reply_text(text=f"Не найден тикер {update.message.text}", parse_mode=ParseMode.MARKDOWN)
+
+    
 
 def main():
     application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
@@ -317,7 +334,7 @@ def main():
     application.add_handler(CommandHandler('reset', reset_processed_stocks_command))
     application.add_handler(CommandHandler('info', get_potential_actives_command))
     application.add_handler(CommandHandler('stop', stop_trading_command))
-    application.add_handler(CommandHandler('balance', reset_processed_stocks_command))
+    application.add_handler(CommandHandler('balance', get_balance_command))
 
 
     application.add_handler(CallbackQueryHandler(ask_sell_stock_button, pattern='^ask_sell_stock_'))
